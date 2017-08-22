@@ -26,16 +26,16 @@ import com.twitter.logging.Logging
  *   }
  * }}}
  */
-trait TwitterServer extends App
-  with Linters
-  with Logging
-  with EventSink
-  with LogFormat
-  with Hooks
-  with AdminHttpServer
-  with Admin
-  with Lifecycle
-  with Stats
+trait TwitterServer
+    extends App
+    with Linters
+    with Logging
+    with LogFormat
+    with Hooks
+    with AdminHttpServer
+    with Admin
+    with Lifecycle
+    with Stats
 
 /**
  * A Java-friendly version of the [[TwitterServer]].

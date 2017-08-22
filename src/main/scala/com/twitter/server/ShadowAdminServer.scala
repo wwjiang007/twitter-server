@@ -2,12 +2,13 @@ package com.twitter.server
 
 import com.twitter.app.App
 import com.twitter.concurrent.NamedPoolThreadFactory
-import com.twitter.finagle.http.{HttpMuxer, HttpMuxHandler}
+import com.twitter.finagle.http.{HttpMuxHandler, HttpMuxer}
 import com.twitter.finagle.netty4
 import com.twitter.finagle.stats.NullStatsReceiver
 import com.twitter.finagle.tracing.NullTracer
 import com.twitter.finagle.util.LoadService
 import com.twitter.finagle.{Http, ListeningServer, NullServer, param}
+import io.netty.channel.epoll.EpollEventLoopGroup
 import io.netty.channel.nio.NioEventLoopGroup
 import java.net.InetSocketAddress
 import java.util.logging.Logger
@@ -26,8 +27,11 @@ import java.util.logging.Logger
 trait ShadowAdminServer { self: App with AdminHttpServer =>
 
   @volatile protected var shadowHttpServer: ListeningServer = NullServer
-  val shadowAdminPort = flag("shadow.admin.port", new InetSocketAddress(defaultHttpPort+1),
-    "Shadow admin http server port")
+  val shadowAdminPort = flag(
+    "shadow.admin.port",
+    new InetSocketAddress(defaultHttpPort + 1),
+    "Shadow admin http server port"
+  )
 
   premain {
     val log = Logger.getLogger(getClass.getName)
@@ -35,18 +39,24 @@ trait ShadowAdminServer { self: App with AdminHttpServer =>
 
     // Ostrich, commons stats, and metrics export a `HttpMuxHandler`
     val handlers = LoadService[HttpMuxHandler]() filter { handler =>
-      handler.pattern == "/vars.json" ||
-      handler.pattern == "/stats.json" ||
-      handler.pattern == "/admin/metrics.json" ||
-      handler.pattern == "/admin/per_host_metrics.json"
+      handler.route.pattern == "/vars.json" ||
+      handler.route.pattern == "/stats.json" ||
+      handler.route.pattern == "/admin/metrics.json" ||
+      handler.route.pattern == "/admin/per_host_metrics.json"
     }
 
     val muxer = handlers.foldLeft(new HttpMuxer) {
-      case (muxer, h) => muxer.withHandler(h.pattern, h)
+      case (muxer, h) => muxer.withHandler(h.route.pattern, h)
     }
 
-    val shadowEventLoop = new NioEventLoopGroup(1 /*nThreads*/ ,
-      new NamedPoolThreadFactory("twitter-server/netty", makeDaemons = true))
+    val threadFactory = new NamedPoolThreadFactory("twitter-server/netty", makeDaemons = true)
+
+    val shadowEventLoop =
+      if (com.twitter.finagle.netty4.nativeEpoll.enabled)
+        new EpollEventLoopGroup(1 /*nThreads*/, threadFactory)
+      else {
+        new NioEventLoopGroup(1 /*nThreads*/, threadFactory)
+      }
 
     shadowHttpServer = Http.server
       .configured(param.Stats(NullStatsReceiver))

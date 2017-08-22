@@ -2,10 +2,49 @@
   (http://docutils.sourceforge.net/docs/user/rst/quickstart.html)
   as it is included in TwitterServer's user's guide.
 
-Note that ``RB_ID=#`` correspond to associated messages in commits.
+Note that ``PHAB_ID=#`` and ``RB_ID=#`` correspond to associated messages in commits.
 
 1.x
 -----
+
+Breaking API Changes
+~~~~~~~~~~~~~~~~~~~~
+
+  * Removed code related to `util-events` including `EventSink`, `JsonSink`,
+    `TraceEventSink`. The corresponding "/admin/events" and "/admin/events/record/"
+    admin HTTP endpoints are also removed. ``PHAB_ID=D82346``
+
+1.31.0
+------
+
+No Changes
+
+1.30.0
+------
+Runtime Behavior Changes
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+  * The admin server now waits for other registered closables to shut down
+    before commencing its own shutdown. ``RB_ID=916421``
+
+Breaking API Changes
+~~~~~~~~~~~~~~~~~~~~
+
+  * Removed `c.t.server.Closer` trait. Behavior has been moved to
+   `c.t.app.App`. ``RB_ID=915485``
+
+1.29.0
+------
+
+No Changes
+
+1.28.0
+------
+
+Dependencies
+~~~~~~~~~~~~
+
+  * Bump guava to 19.0. ``RB_ID=907807``
 
 1.27.0
 ------

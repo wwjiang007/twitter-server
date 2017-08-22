@@ -9,7 +9,7 @@ import com.twitter.finagle.http.{HttpMuxer, Method, Request, Response}
 import com.twitter.finagle.server.ServerRegistry
 import com.twitter.finagle.stats.NullStatsReceiver
 import com.twitter.finagle.tracing.NullTracer
-import com.twitter.finagle.{Http, ListeningServer, NullServer, Service, param}
+import com.twitter.finagle.{Http, ListeningServer, NullServer, Service}
 import com.twitter.server.util.HttpUtils
 import com.twitter.server.view.{IndexView, NotFoundView}
 import com.twitter.util.registry.Library
@@ -19,6 +19,7 @@ import java.util.logging.{Level, Logger}
 import scala.language.reflectiveCalls
 
 object AdminHttpServer {
+
   /**
    * Represents an element which can be routed to via the admin http server.
    *
@@ -47,7 +48,8 @@ object AdminHttpServer {
     alias: String,
     group: Option[String],
     includeInIndex: Boolean,
-    method: Method = Get)
+    method: Method = Get
+  )
 
   object Route {
     def from(route: http.Route): Route = route.index match {
@@ -58,14 +60,16 @@ object AdminHttpServer {
           alias = index.alias,
           group = Some(index.group),
           includeInIndex = true,
-          method = index.method)
+          method = index.method
+        )
       case None =>
         mkRoute(
           path = route.pattern,
           handler = route.handler,
           alias = route.pattern,
           group = None,
-          includeInIndex = false)
+          includeInIndex = false
+        )
     }
   }
 
@@ -93,9 +97,9 @@ object AdminHttpServer {
 trait AdminHttpServer { self: App =>
   import AdminHttpServer._
 
-
   def defaultHttpPort: Int = 9990
-  val adminPort = flag("admin.port", new InetSocketAddress(defaultHttpPort), "Admin http server port")
+  val adminPort =
+    flag("admin.port", new InetSocketAddress(defaultHttpPort), "Admin http server port")
 
   private[this] val adminHttpMuxer = new Service[Request, Response] {
     override def apply(request: Request): Future[Response] = underlying(request)
@@ -134,10 +138,24 @@ trait AdminHttpServer { self: App =>
   protected def routes: Seq[Route] = Nil
 
   /**
-    * Name used for registration in the [[com.twitter.util.registry.Library]]
-    * @return library name to register in the Library registry.
-    */
+   * Name used for registration in the [[com.twitter.util.registry.Library]]
+   * @return library name to register in the Library registry.
+   */
   protected def libraryName: String = "twitter-server"
+
+  /**
+   * This method allows for further configuration of the http server for parameters not exposed by
+   * this trait or for overriding defaults provided herein, e.g.,
+   *
+   * {{{
+   * override def configureAdminHttpServer(server: Http.Server): Http.Server =
+   *  server.withMonitor(myMonitor)
+   * }}}
+   *
+   * @param server - the [[com.twitter.finagle.Http.Server]] to configure.
+   * @return a configured Http.Server.
+   */
+  protected def configureAdminHttpServer(server: Http.Server): Http.Server = server
 
   private[this] def updateMuxer() = {
     // a logger used to log all sync and async exceptions
@@ -149,7 +167,9 @@ trait AdminHttpServer { self: App =>
     val localRoutes =
       rts.filter(_.includeInIndex).groupBy(_.group).flatMap {
         case (group, rs) =>
-          val links = rs.map { r => IndexView.Link(r.alias, r.path, r.method) }
+          val links = rs.map { r =>
+            IndexView.Link(r.alias, r.path, r.method)
+          }
           group match {
             case Some(g) => Seq(IndexView.Group(g, links))
             case None => links
@@ -198,18 +218,19 @@ trait AdminHttpServer { self: App =>
     }
 
     log.info(s"Serving admin http on ${adminPort()}")
-    adminHttpServer = Http.server
-      .configured(Http.Netty4Impl)
-      .configured(param.Stats(NullStatsReceiver))
-      .configured(param.Tracer(NullTracer))
-      .configured(param.Monitor(loggingMonitor))
-      .configured(param.Label(ServerName))
-      // disable admission control, since we want the server to report stats
-      // especially when it's in a bad state.
-      .configured(ServerAdmissionControl.Param(false))
-      .serve(adminPort(), new NotFoundView andThen adminHttpMuxer)
+    adminHttpServer = configureAdminHttpServer(
+      Http.server
+        .configured(Http.Netty4Impl)
+        .withStatsReceiver(NullStatsReceiver)
+        .withTracer(NullTracer)
+        .withMonitor(loggingMonitor)
+        .withLabel(ServerName)
+        // disable admission control, since we want the server to report stats
+        // especially when it's in a bad state.
+        .configured(ServerAdmissionControl.Param(false))
+    ).serve(adminPort(), new NotFoundView andThen adminHttpMuxer)
 
-    closeOnExit(adminHttpServer)
+    closeOnExitLast(adminHttpServer)
     Library.register(libraryName, Map.empty)
   }
 

@@ -1,5 +1,6 @@
 package com.twitter.server.handler
 
+import com.twitter.finagle.stats.NullStatsReceiver
 import com.twitter.finagle.toggle.{NullToggleMap, Toggle, ToggleMap}
 import com.twitter.server.handler.ToggleHandler._
 import org.junit.runner.RunWith
@@ -13,10 +14,12 @@ class ToggleHandlerTest extends FunSuite {
 
   test("renders empty registeredLibraries") {
     val handler = new ToggleHandler(() => Map.empty)
-    assert(handler.getResponse(ParsedPath(None, None)) ==
-      """{
+    assert(
+      handler.getResponse(ParsedPath(None, None)) ==
+        """{
         |  "libraries" : [ ]
-        |}""".stripMargin)
+        |}""".stripMargin
+    )
   }
 
   test("toLibraryToggles for empty ToggleMaps") {
@@ -40,12 +43,9 @@ class ToggleHandlerTest extends FunSuite {
   }
 
   test("toLibraryToggles") {
-    val t0 = Toggle.Metadata(
-      "com.twitter.server.handler.Id0", 0.0, None, "source=tm0")
-    val t1 = Toggle.Metadata(
-      "com.twitter.server.handler.Id1", 1.0, Some("t1 desc"), "source=tm0")
-    val t2 = Toggle.Metadata(
-      "com.twitter.server.handler.Id2", 1.0, Some("t2 desc"), "source=tm1")
+    val t0 = Toggle.Metadata("com.twitter.server.handler.Id0", 0.0, None, "source=tm0")
+    val t1 = Toggle.Metadata("com.twitter.server.handler.Id1", 1.0, Some("t1 desc"), "source=tm0")
+    val t2 = Toggle.Metadata("com.twitter.server.handler.Id2", 1.0, Some("t2 desc"), "source=tm1")
     val t0b = t0.copy(description = Some("t0 desc"), source = "source=tm1")
 
     val tm0 = new ToggleMap.Immutable(immutable.Seq(t0, t1))
@@ -69,18 +69,21 @@ class ToggleHandlerTest extends FunSuite {
       withLib.toggles.find(_.current.id == id).get
     }
     val expected0 = LibraryToggle(
-      Current(t0.id, t0.fraction, t0b.description),
-      Seq(Component(t0.source, t0.fraction), Component(t0b.source, t0b.fraction)))
+      Current(t0.id, t0.fraction, None, t0b.description),
+      Seq(Component(t0.source, t0.fraction), Component(t0b.source, t0b.fraction))
+    )
     assert(expected0 == libToggle(t0.id))
 
     val expected1 = LibraryToggle(
-      Current(t1.id, t1.fraction, t1.description),
-      Seq(Component(t1.source, t1.fraction)))
+      Current(t1.id, t1.fraction, None, t1.description),
+      Seq(Component(t1.source, t1.fraction))
+    )
     assert(expected1 == libToggle(t1.id))
 
     val expected2 = LibraryToggle(
-      Current(t2.id, t2.fraction, t2.description),
-      Seq(Component(t2.source,t2.fraction)))
+      Current(t2.id, t2.fraction, None, t2.description),
+      Seq(Component(t2.source, t2.fraction))
+    )
     assert(expected2 == libToggle(t2.id))
   }
 
@@ -109,14 +112,42 @@ class ToggleHandlerTest extends FunSuite {
     val mappings = Map("com.twitter.map0" -> mut0, "com.twitter.map1" -> mut1)
     val handler = new ToggleHandler(() => mappings)
 
-    val libs = handler.toLibraries(
-      ParsedPath(Some("com.twitter.map0"), Some("com.twitter.map0toggle1")))
+    val libs =
+      handler.toLibraries(ParsedPath(Some("com.twitter.map0"), Some("com.twitter.map0toggle1")))
     assert(1 == libs.libraries.size)
     val lib = libs.libraries.head
     assert("com.twitter.map0" == lib.libraryName)
     assert(1 == lib.toggles.size)
     val libToggle = lib.toggles.head
     assert("com.twitter.map0toggle1" == libToggle.current.id)
+  }
+
+  test("toLibraries includes last values") {
+    val mut = ToggleMap.newMutable()
+    mut.put("com.twitter.map0toggle0", 0.0)
+    mut.put("com.twitter.map0toggle1", 1.0)
+    mut.put("com.twitter.map0toggleNoneThen1", 1.0)
+    val tm = ToggleMap.observed(mut, NullStatsReceiver)
+
+    // use 2 of the toggles, causing the values to be captured
+    tm("com.twitter.map0toggle0")(5)
+    tm("com.twitter.map0toggle1")(5)
+
+    val mappings = Map("com.twitter.map0" -> tm)
+    val handler = new ToggleHandler(() => mappings)
+
+    def currentForId(id: String): ToggleHandler.Current = {
+      val libs = handler.toLibraries(ParsedPath(Some("com.twitter.map0"), Some(id)))
+      libs.libraries.head.toggles.head.current
+    }
+
+    assert(currentForId("com.twitter.map0toggle0").lastValue.contains(false))
+    assert(currentForId("com.twitter.map0toggle1").lastValue.contains(true))
+    assert(currentForId("com.twitter.map0toggleNoneThen1").lastValue.isEmpty)
+
+    // update the value and validate we see the change
+    tm("com.twitter.map0toggleNoneThen1")(5)
+    assert(currentForId("com.twitter.map0toggleNoneThen1").lastValue.contains(true))
   }
 
   test("setToggle") {
@@ -220,8 +251,11 @@ class ToggleHandlerTest extends FunSuite {
     assertParsePathOk("/admin/toggles", None, None)
     assertParsePathOk("/admin/toggles/", None, None)
     assertParsePathOk("/admin/toggles/com.twitter.lib", Some("com.twitter.lib"), None)
-    assertParsePathOk("/admin/toggles/com.twitter.lib/com.twitter.lib.Toggle",
-      Some("com.twitter.lib"), Some("com.twitter.lib.Toggle"))
+    assertParsePathOk(
+      "/admin/toggles/com.twitter.lib/com.twitter.lib.Toggle",
+      Some("com.twitter.lib"),
+      Some("com.twitter.lib.Toggle")
+    )
   }
 
   test("parsePath invalid path format") {

@@ -4,39 +4,40 @@ import com.twitter.conversions.time._
 import com.twitter.finagle.{Http, ListeningServer}
 import com.twitter.finagle.http._
 import com.twitter.server.util.HttpUtils._
-import com.twitter.util.{Await, Future}
+import com.twitter.util._
 import java.net.{InetAddress, InetSocketAddress}
-import org.junit.runner.RunWith
 import org.scalatest.FunSuite
-import org.scalatest.junit.JUnitRunner
+import org.scalatest.concurrent.{Eventually, IntegrationPatience}
 
 class MockMetricsExporter extends HttpMuxHandler {
   val pattern = "/admin/metrics.json"
+  def route: Route = Route(pattern, this)
   def apply(req: Request): Future[Response] =
     newOk("standard metrics!")
 }
 
 class MockOstrichExporter extends HttpMuxHandler {
   val pattern = "/stats.json"
+  def route: Route = Route(pattern, this)
   def apply(req: Request): Future[Response] =
     newOk("metrics!")
 }
 
 class MockCommonsExporter extends HttpMuxHandler {
   val pattern = "/vars.json"
+  def route: Route = Route(pattern, this)
   def apply(req: Request): Future[Response] =
     newOk("commons stats!")
 }
 
 class MockHostMetricsExporter extends HttpMuxHandler {
   val pattern = "/admin/per_host_metrics.json"
+  def route: Route = Route(pattern, this)
   def apply(req: Request): Future[Response] =
     newOk("per host metrics!")
 }
 
-
-@RunWith(classOf[JUnitRunner])
-class AdminHttpServerTest extends FunSuite  {
+class AdminHttpServerTest extends FunSuite with Eventually with IntegrationPatience {
 
   def checkServer(server: ListeningServer): Unit = {
     val port = server.boundAddress.asInstanceOf[InetSocketAddress].getPort
@@ -97,7 +98,8 @@ class AdminHttpServerTest extends FunSuite  {
       override def main(): Unit = {
         checkServer(adminHttpServer)
         // Try to close the server with a GET
-        val adminServerBoundPort = adminHttpServer.boundAddress.asInstanceOf[InetSocketAddress].getPort
+        val adminServerBoundPort =
+          adminHttpServer.boundAddress.asInstanceOf[InetSocketAddress].getPort
         assert(adminServerBoundPort == this.adminBoundAddress.getPort)
         val client = Http.client.newService(s"localhost:$adminServerBoundPort")
         val res = Await.result(client(Request(Method.Get, "/quitquitquit")), 1.second)
@@ -109,4 +111,72 @@ class AdminHttpServerTest extends FunSuite  {
     }
     server.main(args = Array.empty[String])
   }
-} 
+
+  test("admin server exits last") {
+    Time.withCurrentTimeFrozen { _ =>
+      val server = new TestTwitterServer {
+        override protected lazy val shutdownTimer = new MockTimer
+
+        override def main(): Unit = {
+          val p = new Promise[Unit]
+          var sawClose = false
+          val drainingClosable = Closable.make { _ =>
+            sawClose = true; p
+          }
+          closeOnExit(drainingClosable)
+          val closeF: Future[Unit] = close(Time.now + 10.seconds)
+          assert(sawClose)
+          // `drainingClosable` keeps the admin server from shutting down
+          assert(!closeF.isDefined)
+          shutdownTimer.tick()
+
+          // metrics endpoint still responding
+          checkServer(adminHttpServer)
+
+          // last closable is done, admin server shuts down
+          p.setDone()
+          eventually { assert(closeF.isDefined) }
+        }
+      }
+      server.main(args = Array.empty[String])
+    }
+  }
+
+  test("admin server respects deadline") {
+    Time.withCurrentTimeFrozen { ctl =>
+      val server = new TestTwitterServer {
+
+        override protected lazy val shutdownTimer = new MockTimer
+
+        override protected def exitOnError(reason: String): Unit = ()
+
+        override def main(): Unit = {
+          val drainingClosable = Closable.make { _ =>
+            Future.never
+          }
+          closeOnExit(drainingClosable)
+          val closeF: Future[Unit] = close(Time.now + 10.seconds)
+          // `drainingClosable` keeps the admin server from shutting down
+          assert(!closeF.isDefined)
+
+          // metrics endpoint still responding
+          checkServer(adminHttpServer)
+
+          // deadline exhausted
+          ctl.advance(11.seconds)
+          shutdownTimer.tick()
+
+          val port = adminHttpServer.boundAddress.asInstanceOf[InetSocketAddress].getPort
+          val client = Http.client.newService(s"localhost:$port")
+          val resp: Future[Response] = client(Request("/admin/metrics.json"))
+          Await.ready(resp, 1.second)
+          val Some(Throw(ex)) = resp.poll
+          assert(ex.getMessage.startsWith("Connection refused"))
+          eventually { assert(closeF.isDefined) }
+        }
+      }
+      server.main(args = Array.empty[String])
+    }
+  }
+
+}
