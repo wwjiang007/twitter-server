@@ -1,14 +1,13 @@
 import scoverage.ScoverageKeys
 
 // All Twitter library releases are date versioned as YY.MM.patch
-val releaseVersion = "17.12.0-SNAPSHOT"
+val releaseVersion = "18.4.0-SNAPSHOT"
 
 val jacksonVersion = "2.8.4"
 val jacksonLibs = Seq(
   "com.fasterxml.jackson.core" % "jackson-core" % jacksonVersion,
   "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVersion,
-  "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion exclude("com.google.guava", "guava"),
-  "com.google.guava" % "guava" % "19.0"
+  "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion
 )
 val slf4jVersion = "1.7.21"
 
@@ -122,7 +121,6 @@ lazy val twitterServer = (project in file("server"))
       finagle("http"),
       finagle("toggle"),
       finagle("tunable"),
-      finagle("zipkin-core"),
       util("app"),
       util("core"),
       util("jvm"),
